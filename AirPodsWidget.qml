@@ -24,18 +24,52 @@ PluginComponent {
 
     property var popoutService: null
 
-    // ---- live state (fed by the bridge) -----------------------------------
-    property bool connected: false
-    property string model: "buds"          // "buds" | "headset"
-    property int batLeft: -1
-    property int batRight: -1
-    property int batCase: -1
-    property int batHeadset: -1
-    property string mode: "unknown"        // off | transparency | adaptive | anc | unknown
-    property bool conversation: false
-    property bool earDetection: false
-    property string deviceName: "AirPods"
-    property bool ready: false             // first poll completed
+    // ---- shared live state -------------------------------------------------
+    // The widget is instantiated once per surface (bar pill, popout, CC tile, CC
+    // detail) and each instance runs independently. To keep every surface in sync
+    // instantly, we don't keep per-instance state.
+    // Instead every instance reads from, and writes to, ONE shared blob in
+    // PluginService.globalVars (a reactive global singleton shared across all
+    // instances). Writing it re-evaluates the bindings below in every instance.
+    //
+    // We key by a constant, not pluginId, because the CC detail instance has an
+    // empty pluginId (see DetailHost note below) - but PluginService itself is
+    // always reachable via qs.Services regardless of the injected pluginService.
+    readonly property string storeId: "airpods_state"
+
+    readonly property var shared: {
+        var p = PluginService.globalVars[storeId]
+        return (p && p.state) ? p.state : ({})
+    }
+
+    // Optimistic locks, keyed by field name: { mode: { value, until } }. Stored in
+    // the shared blob too, so every instance's poll reconciler respects them (any
+    // instance may be the one that polls). A lock says "the user just set this field
+    // - ignore contradicting hardware reads until the read confirms the value or the
+    // lock expires". This kills the new→old→new flicker: after a click, LibrePods'
+    // tray toggle-state lags ~1-2s, so an in-flight poll reads the OLD mode and would
+    // otherwise clobber the optimistic value before refreshSoon reads the settled one.
+    readonly property var locks: {
+        var p = PluginService.globalVars[storeId]
+        return (p && p.locks) ? p.locks : ({})
+    }
+    // Safety-net ceiling. Normal case clears earlier: the confirming refreshSoon
+    // (2.5s) reads the settled value and releases the lock. The timeout only matters
+    // if the command silently failed and the value never changes.
+    readonly property int lockMs: 4000
+
+    // Every field is a binding onto the shared blob → all instances stay in sync.
+    readonly property bool connected: shared.connected === true
+    readonly property string model: shared.model || "buds"   // "buds" | "headset"
+    readonly property int batLeft: shared.left !== undefined ? shared.left : -1
+    readonly property int batRight: shared.right !== undefined ? shared.right : -1
+    readonly property int batCase: shared.case !== undefined ? shared.case : -1
+    readonly property int batHeadset: shared.headset !== undefined ? shared.headset : -1
+    readonly property string mode: shared.mode || "unknown"  // off | transparency | adaptive | anc | unknown
+    readonly property bool conversation: shared.conversation === true
+    readonly property bool earDetection: shared.earDetection === true
+    readonly property string deviceName: shared.deviceName || "AirPods Pro 2"
+    readonly property bool ready: shared.ready === true       // first poll completed
 
     // ---- static metadata ---------------------------------------------------
     readonly property var modeInfo: ({
@@ -86,6 +120,68 @@ PluginComponent {
     // instance a unique id namespace.
     readonly property string procTag: "airpods_" + Math.floor(Math.random() * 1e9)
 
+    // ---- shared store writers ----------------------------------------------
+    // Publish a fresh poll result. Before writing we reconcile against any active
+    // optimistic locks: a locked field that the poll now agrees with is confirmed
+    // (lock released); one the poll still disagrees with is either held at the
+    // optimistic value (lock live) or, once expired, allowed through as hardware
+    // truth (lock released). We dedupe so idle polling doesn't churn bindings.
+    function publishState(st) {
+        var now = Date.now()
+        var curLocks = locks
+        var out = Object.assign({}, st)
+        var nextLocks = null // cloned lazily, only if a lock changes
+        for (var f in curLocks) {
+            var lock = curLocks[f]
+            if (!lock)
+                continue
+            if (st[f] === lock.value) {
+                // Hardware caught up → confirmed, release the lock.
+                if (!nextLocks)
+                    nextLocks = Object.assign({}, curLocks)
+                delete nextLocks[f]
+            } else if (now < lock.until) {
+                // Still contradicting and within the window → hold optimistic value.
+                out[f] = lock.value
+            } else {
+                // Timed out → accept hardware truth and release the lock.
+                if (!nextLocks)
+                    nextLocks = Object.assign({}, curLocks)
+                delete nextLocks[f]
+            }
+        }
+        if (!sameState(shared, out))
+            PluginService.setGlobalVar(storeId, "state", out)
+        if (nextLocks)
+            PluginService.setGlobalVar(storeId, "locks", nextLocks)
+    }
+
+    // Merge a partial update (used by the poll's error path) into the shared blob,
+    // preserving every other field. Does not touch locks.
+    function patchState(patch) {
+        PluginService.setGlobalVar(storeId, "state", Object.assign({}, shared, patch))
+    }
+
+    // Optimistic control write: set a field instantly across all instances AND lock
+    // it, so no in-flight/next poll can flip it back until it confirms or expires.
+    function optimisticSet(field, value) {
+        var st = Object.assign({}, shared)
+        st[field] = value
+        var lk = Object.assign({}, locks)
+        lk[field] = { value: value, until: Date.now() + lockMs }
+        PluginService.setGlobalVar(storeId, "state", st)
+        PluginService.setGlobalVar(storeId, "locks", lk)
+    }
+
+    function sameState(a, b) {
+        var keys = ["ready", "connected", "model", "left", "right", "case", "headset", "mode", "conversation", "earDetection", "deviceName"]
+        for (var i = 0; i < keys.length; i++) {
+            if (a[keys[i]] !== b[keys[i]])
+                return false
+        }
+        return true
+    }
+
     // ---- data plumbing -----------------------------------------------------
     function refresh() {
         if (!scriptPath)
@@ -94,26 +190,30 @@ PluginComponent {
             // The callback can fire after the plugin has been reloaded/destroyed,
             // in which case touching `root` throws; guard the whole body.
             try {
-                root.ready = true
                 if (code !== 0 || !out) {
-                    root.connected = false
+                    root.patchState({ ready: true, connected: false })
                     return
                 }
                 var s = JSON.parse(out.trim())
-                root.connected = !!s.connected
-                root.model = s.model || "buds"
-                root.batLeft = s.left
-                root.batRight = s.right
-                root.batCase = s.case
-                root.batHeadset = s.headset
-                root.mode = s.mode || "unknown"
-                root.conversation = !!s.conversation
-                root.earDetection = !!s.earDetection
-                if (s.deviceName)
-                    root.deviceName = s.deviceName
+                var num = function (v) {
+                    return (typeof v === "number") ? v : -1
+                }
+                root.publishState({
+                    ready: true,
+                    connected: !!s.connected,
+                    model: s.model || "buds",
+                    left: num(s.left),
+                    right: num(s.right),
+                    case: num(s.case),
+                    headset: num(s.headset),
+                    mode: s.mode || "unknown",
+                    conversation: !!s.conversation,
+                    earDetection: !!s.earDetection,
+                    deviceName: s.deviceName || root.deviceName
+                })
             } catch (e) {
                 if (root)
-                    root.connected = false
+                    root.patchState({ ready: true, connected: false })
             }
         }, 0, 6000)
     }
@@ -122,7 +222,7 @@ PluginComponent {
     function setNoise(id) {
         if (!scriptPath || modeOrder.indexOf(id) < 0)
             return
-        root.mode = id // optimistic
+        root.optimisticSet("mode", id) // instantly synced + locked against stale polls
         Proc.runCommand(procTag + "_noise", ["bash", scriptPath, "noise", id], function () {
             refreshSoon.restart()
         }, 0, 6000)
@@ -143,7 +243,7 @@ PluginComponent {
     function setEarDetection(on) {
         if (!scriptPath)
             return
-        root.earDetection = on // optimistic
+        root.optimisticSet("earDetection", on) // instantly synced + locked against stale polls
         Proc.runCommand(procTag + "_eardetection", ["bash", scriptPath, "eardetection", on ? "on" : "off"], function () {
             ToastService?.showInfo("Ear detection " + (on ? "enabled" : "disabled") + " — reconnect AirPods to apply")
         }, 0, 6000)
@@ -152,7 +252,7 @@ PluginComponent {
     function rename(name) {
         if (!scriptPath || !name || !name.length)
             return
-        root.deviceName = name // optimistic
+        root.optimisticSet("deviceName", name) // instantly synced + locked against stale polls
         Proc.runCommand(procTag + "_rename", ["bash", scriptPath, "rename", name], function () {
             ToastService?.showInfo("Renamed — reconnect AirPods to apply")
             refreshSoon.restart()
