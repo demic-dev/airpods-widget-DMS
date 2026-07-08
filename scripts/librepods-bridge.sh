@@ -84,6 +84,36 @@ read_menu() {
 
 json_escape() { sed -E 's/\\/\\\\/g; s/"/\\"/g'; }
 
+# Authoritative connection state, straight from BlueZ (org.bluez Device1.Connected).
+# LibrePods leaves its tray ToolTip/menu stale after the buds go back in the case
+# — it only refreshes on restart — so the tray is NOT a reliable "connected" signal.
+# BlueZ flips immediately. We match the AirPods device by its Alias: first against
+# LibrePods' configured deviceName, then any "AirPod" as a fallback.
+# Prints "true" / "false", or nothing if the device/bus can't be found (caller then
+# falls back to the tray heuristic rather than forcing a state).
+bt_connected() {
+    local want objs dev alias conn
+    want=$(grep -E '^deviceName=' "$CONF" 2>/dev/null | head -1 | cut -d= -f2-)
+    objs=$(dbus-send --system --print-reply --dest=org.bluez / \
+        org.freedesktop.DBus.ObjectManager.GetManagedObjects 2>/dev/null) || return 1
+    while read -r dev; do
+        [[ -z "$dev" ]] && continue
+        alias=$(dbus-send --system --print-reply=literal --dest=org.bluez "$dev" \
+            org.freedesktop.DBus.Properties.Get \
+            string:org.bluez.Device1 string:Alias 2>/dev/null \
+            | tail -1 | sed -E 's/^[[:space:]]*variant[[:space:]]+string[[:space:]]+//')
+        if { [[ -n "$want" ]] && [[ "$alias" == "$want" ]]; } || [[ "$alias" == *AirPod* ]]; then
+            conn=$(dbus-send --system --print-reply=literal --dest=org.bluez "$dev" \
+                org.freedesktop.DBus.Properties.Get \
+                string:org.bluez.Device1 string:Connected 2>/dev/null \
+                | tail -1 | awk '{print $NF}')
+            [[ "$conn" == "true" || "$conn" == "false" ]] && { echo "$conn"; return 0; }
+        fi
+    done < <(grep -oE '/org/bluez/hci[0-9]+/dev_[0-9A-F_]+"' <<<"$objs" \
+        | tr -d '"' | grep -vE '/(sep|fd)[0-9]' | sort -u)
+    return 1
+}
+
 # --- commands --------------------------------------------------------------
 
 cmd_status() {
@@ -92,6 +122,10 @@ cmd_status() {
     local left=-1 right=-1 case=-1 headset=-1
     local mode="unknown" conversation=false
     local name=""
+
+    # Authoritative connection state (empty => couldn't determine, fall back to tray).
+    local bt
+    bt=$(bt_connected) || bt=""
 
     sni=$(find_sni) && read -r service path <<<"$sni"
 
@@ -150,6 +184,15 @@ cmd_status() {
         [[ "${ed_setting:-0}" =~ ^[0-9]+$ ]] && (( ed_setting >= 1 )) && eardetection=true
     fi
     [[ -z "$name" ]] && name="AirPods"
+
+    # BlueZ has the final say when it knows. On disconnect LibrePods' tray stays
+    # stale, so we must actively clear the readouts rather than echo the old values.
+    case "$bt" in
+        true)  connected=true ;;
+        false) connected=false; model="buds"
+               left=-1; right=-1; case=-1; headset=-1
+               mode="unknown"; conversation=false ;;
+    esac
 
     printf '{"connected":%s,"model":"%s","left":%s,"right":%s,"case":%s,"headset":%s,"mode":"%s","conversation":%s,"earDetection":%s,"deviceName":"%s"}\n' \
         "$connected" "$model" "${left:--1}" "${right:--1}" "${case:--1}" "${headset:--1}" \
