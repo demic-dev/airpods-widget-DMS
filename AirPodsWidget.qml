@@ -449,7 +449,6 @@ PluginComponent {
 
             Row {
                 anchors.left: parent.left
-                anchors.right: editBtn.left
                 anchors.verticalCenter: parent.verticalCenter
                 anchors.rightMargin: Theme.spacingS
                 spacing: Theme.spacingM
