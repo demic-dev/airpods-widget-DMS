@@ -17,6 +17,6 @@ PluginSettings {
             { label: "10 seconds", value: "10" },
             { label: "30 seconds", value: "30" }
         ]
-        defaultValue: "1"
+        defaultValue: "2"
     }
 }
