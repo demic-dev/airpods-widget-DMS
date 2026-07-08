@@ -610,7 +610,7 @@ PluginComponent {
                             { id: "off", icon: "block", label: "Off" },
                             { id: "transparency", icon: "noise_aware", label: "Transparency" },
                             { id: "adaptive", icon: "auto_mode", label: "Adaptive" },
-                            { id: "anc", icon: "noise_control_on", label: "Noise" }
+                            { id: "anc", icon: "noise_control_on", label: "ANC" }
                         ]
 
                         delegate: Rectangle {
