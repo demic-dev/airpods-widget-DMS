@@ -11,7 +11,7 @@
 #   * battery (L / R / case, or a single headset level) -> tray ToolTip
 #       "Battery Status: Left: 82%, Right: 79%, Case: 100%"
 #   * current noise mode + conversation awareness        -> tray DBusMenu toggles
-#   * device name                                        -> config file / SNI title
+#   * device name + ear-detection setting                -> LibrePods config file
 #
 # Control is done through the shipped `librepods-ctl` CLI (noise modes) and the
 # tray DBusMenu (conversation awareness toggle).
@@ -36,9 +36,6 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/AirPodsTrayApp/AirPodsTrayApp.conf"
 
 # --- helpers ---------------------------------------------------------------
 
-# Extract quoted strings from a dbus-send reply.
-_strings() { grep -oE 'string "[^"]*"' | sed -E 's/^string "//; s/"$//'; }
-
 # Locate the LibrePods StatusNotifierItem -> prints "SERVICE PATH" or nothing.
 find_sni() {
     local reply entry service path id
@@ -48,8 +45,7 @@ find_sni() {
         string:"$SNI_WATCHER_DEST" string:RegisteredStatusNotifierItems 2>/dev/null) || return 1
 
     # Entries look like  ":1.89/StatusNotifierItem"  or  ":1.37/org/ayatana/..."
-    for entry in $(echo "$reply" | grep -oE '(:[0-9]+\.[0-9]+|org\.[A-Za-z0-9._-]+)(/[A-Za-z0-9/_-
-]+)?'); do
+    for entry in $(echo "$reply" | grep -oE '(:[0-9]+\.[0-9]+|org\.[A-Za-z0-9._-]+)(/[A-Za-z0-9/_-]+)?'); do
         if [[ "$entry" == */* ]]; then
             service="${entry%%/*}"
             path="/${entry#*/}"
@@ -108,44 +104,38 @@ cmd_status() {
     if [[ -n "$tooltip" ]]; then
         if grep -qiE 'Headset:[[:space:]]*[0-9]+%' <<<"$tooltip"; then
             model="headset"
-            headset=$(grep -oiE 'Headset:[[:space:]]*[0-9]+' <<<"$tooltip" | grep -oE '[0-9]+' | h
-ead -1)
+            headset=$(grep -oiE 'Headset:[[:space:]]*[0-9]+' <<<"$tooltip" | grep -oE '[0-9]+' | head -1)
             connected=true
         elif grep -qiE 'Left:[[:space:]]*[0-9]+%' <<<"$tooltip"; then
-            left=$(grep -oiE 'Left:[[:space:]]*[0-9]+'  <<<"$tooltip" | grep -oE '[0-9]+' | head -
-1)
-            right=$(grep -oiE 'Right:[[:space:]]*[0-9]+' <<<"$tooltip" | grep -oE '[0-9]+' | head
--1)
-            case=$(grep -oiE 'Case:[[:space:]]*[0-9]+'   <<<"$tooltip" | grep -oE '[0-9]+' | head
--1)
+            left=$(grep -oiE 'Left:[[:space:]]*[0-9]+'   <<<"$tooltip" | grep -oE '[0-9]+' | head -1)
+            right=$(grep -oiE 'Right:[[:space:]]*[0-9]+' <<<"$tooltip" | grep -oE '[0-9]+' | head -1)
+            case=$(grep -oiE 'Case:[[:space:]]*[0-9]+'   <<<"$tooltip" | grep -oE '[0-9]+' | head -1)
             connected=true
         fi
     fi
 
     # Noise mode + conversation awareness from the tray menu toggle states.
     if [[ -n "$menu" ]]; then
-        # Walk labels and their following toggle-state in document order.
-        local label state
+        local label="" state=""
         while IFS= read -r line; do
             if [[ "$line" == LABEL:* ]]; then
                 label="${line#LABEL:}"
             elif [[ "$line" == STATE:* ]]; then
                 state="${line#STATE:}"
                 case "$label" in
-                    "Off")                 [[ "$state" == 1 ]] && mode="off" ;;
-                    "Transparency")        [[ "$state" == 1 ]] && mode="transparency" ;;
-                    "Adaptive")            [[ "$state" == 1 ]] && mode="adaptive" ;;
-                    "Noise Cancellation")  [[ "$state" == 1 ]] && mode="anc" ;;
+                    "Off")                [[ "$state" == 1 ]] && mode="off" ;;
+                    "Transparency")       [[ "$state" == 1 ]] && mode="transparency" ;;
+                    "Adaptive")           [[ "$state" == 1 ]] && mode="adaptive" ;;
+                    "Noise Cancellation") [[ "$state" == 1 ]] && mode="anc" ;;
                     "Toggle Conversational Awareness")
                         [[ "$state" == 1 ]] && conversation=true ;;
                 esac
             fi
         done < <(echo "$menu" | grep -oE 'string "[^"]+"|int32 [0-9]+' | awk '
-            /^string "label"/         { next }
-            /^string "toggle-state"/  { expect_state=1; next }
-            /^string "/               { gsub(/^string "|"$/,""); lbl=$0; print "LABEL:" lbl; next
-}
-            /^int32/                  { if (expect_state) { print "STATE:" $2; expect_state=0 } }
+            /^string "label"/        { next }
+            /^string "toggle-state"/ { expect_state=1; next }
+            /^string "/              { gsub(/^string "|"$/,""); print "LABEL:" $0; next }
+            /^int32/                 { if (expect_state) { print "STATE:" $2; expect_state=0 } }
         ')
         # If a menu exists we consider the device present even without battery yet.
         [[ "$mode" != "unknown" ]] && connected=true
@@ -161,7 +151,7 @@ ead -1)
     fi
     [[ -z "$name" ]] && name="AirPods"
 
-    printf '{"connected":%s,"model":"%s","left":%s,"right":%s,"case":%s,"headset":%s,"mode":"%s", "conversation":%s,"earDetection":%s,"deviceName":"%s"}\n' \
+    printf '{"connected":%s,"model":"%s","left":%s,"right":%s,"case":%s,"headset":%s,"mode":"%s","conversation":%s,"earDetection":%s,"deviceName":"%s"}\n' \
         "$connected" "$model" "${left:--1}" "${right:--1}" "${case:--1}" "${headset:--1}" \
         "$mode" "$conversation" "$eardetection" "$(printf '%s' "$name" | json_escape)"
 }
@@ -191,40 +181,24 @@ cmd_rename() {
     _conf_set deviceName "$name"
 }
 
-
 cmd_noise() {
     case "${1:-}" in
-        off|transparency|adaptive) librepods-ctl "noise:${1}" ;;
-        anc)                       librepods-ctl "noise:anc" ;;
+        off|transparency|adaptive|anc) librepods-ctl "noise:${1}" ;;
         *) echo "unknown noise mode: ${1:-}" >&2; exit 2 ;;
     esac
 }
 
-cmd_conversation() {
-    # No explicit set command exists; the tray menu offers a toggle. Find its id.
-    local sni service="" path="" menu id
-    sni=$(find_sni) && read -r service path <<<"$sni" || { echo "librepods not found" >&2; exit 1;
- }
-    menu=$(read_menu "$service")
-    # Find the int32 id that precedes the "Toggle Conversational Awareness" label.
-    id=$(echo "$menu" | grep -oE 'int32 [0-9]+|string "[^"]*"' | awk '
-        /^int32/ { last=$2 }
-        /Toggle Conversational Awareness/ { print last; exit }
-    ')
-    [[ -z "$id" ]] && { echo "conversation toggle not found" >&2; exit 1; }
-    dbus-send --session --dest="$service" /MenuBar \
-        com.canonical.dbusmenu.Event \
-        int32:"$id" string:clicked variant:int32:0 uint32:0 >/dev/null 2>&1
-}
-
 # --- dispatch --------------------------------------------------------------
+#
+# Note: conversation awareness is read-only. LibrePods 0.2.5 offers no external
+# way to toggle it (librepods-ctl only does noise, its control socket only
+# accepts noise:* commands, and the tray DBusMenu ignores activation events), so
+# there is deliberately no `conversation` command here.
 
 case "${1:-status}" in
-    status)        cmd_status ;;
-    noise)         cmd_noise "${2:-}" ;;
-    conversation)  cmd_conversation ;;
-    eardetection)  cmd_eardetection "${2:-}" ;;
-        rename)        shift; cmd_rename "$@" ;;
-        *) echo "usage: $0 {status|noise <mode>|conversation|eardetection on|off|renam
-    e <name>}" >&2; exit 2 ;;
+    status)       cmd_status ;;
+    noise)        cmd_noise "${2:-}" ;;
+    eardetection) cmd_eardetection "${2:-}" ;;
+    rename)       shift; cmd_rename "$@" ;;
+    *) echo "usage: $0 {status|noise <mode>|eardetection on|off|rename <name>}" >&2; exit 2 ;;
 esac

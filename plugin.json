@@ -1,12 +1,11 @@
 {
     "id": "airpods",
     "name": "AirPods",
-    "description": "AirPods battery, noise modes and Conversation Awareness in the bar, a popout an
-d Control Center — powered by LibrePods.",
+    "description": "AirPods control center, powered by LibrePods.",
     "version": "1.0.0",
-    "author": "librepods-dms",
+    "author": "demic-dev",
     "type": "widget",
-    "capabilities": ["airpods", "dankbar-widget", "control-center"],
+    "capabilities": ["dankbar-widget", "control-center"],
     "component": "./AirPodsWidget.qml",
     "icon": "earbuds",
     "settings": "./Settings.qml",
