@@ -11,14 +11,6 @@ import qs.Modules.Plugins
 // This is the controller: it polls the LibrePods bridge for live state, exposes
 // that state as reactive properties, and provides the control functions used by
 // the bar pill, the popout and the Control Center tile.
-//
-// NOTE: everything the plugin renders is defined *inside this file* — bar pills,
-// the popout body and the CC detail all reuse the `PanelBody` inline component.
-// DMS loads a plugin's main component through a cache-busting URL, and that load
-// path does not resolve sibling `.qml` files as QML types (nor via `import "."`
-// or a `qmldir`), so referencing an external component file yields
-// "X is not a type" and the popout silently fails to instantiate. Inline
-// components are the only reliable way to share UI across the surfaces.
 PluginComponent {
     id: root
 
@@ -77,14 +69,14 @@ PluginComponent {
             "transparency": { icon: "noise_aware", label: "Transparency" },
             "adaptive": { icon: "auto_mode", label: "Adaptive" },
             "anc": { icon: "noise_control_on", label: "Noise Cancellation" },
-            "unknown": { icon: "earbuds", label: "—" }
+            "unknown": { icon: "earbuds", label: "-" }
         })
     readonly property var modeOrder: ["off", "transparency", "adaptive", "anc"]
 
     readonly property string modeLabel: (modeInfo[mode] || modeInfo["unknown"]).label
     readonly property string modeIcon: (modeInfo[mode] || modeInfo["unknown"]).icon
 
-    // Lowest available bud level, used for the compact bar/CC readouts.
+    // Lowest available battery level, used for the compact bar/CC readouts.
     readonly property int lowestLevel: {
         if (model === "headset")
             return batHeadset
@@ -97,11 +89,11 @@ PluginComponent {
     }
 
     // The bridge script path. We prefer pluginService.getPluginPath(), but that
-    // requires a live pluginService AND a real pluginId — and the Control Center
-    // *detail* is rendered on a throwaway instance created via
+    // requires a live pluginService AND a real pluginId - and the Control Center
+    // detail is rendered on a throwaway instance created via
     // `pluginComponent.createObject(null)` (see DMS DetailHost.qml), i.e. with NO
     // pluginService and an empty pluginId. So we fall back to resolving the script
-    // relative to *this QML file's own location*, which always works regardless of
+    // relative to this QML file's own location, which always works regardless of
     // how the instance was created. That lets every surface (bar popout, CC tile,
     // CC detail) poll and control on its own.
     readonly property string scriptPath: {
@@ -116,7 +108,7 @@ PluginComponent {
     // Proc.runCommand is a global singleton that keys its debouncer + callback by
     // this id. The widget is instantiated multiple times (bar popout, CC tile, CC
     // detail) and they poll concurrently, so a shared id would make instances
-    // overwrite each other's callbacks — only one would ever update. Give every
+    // overwrite each other's callbacks - only one would ever update. Give every
     // instance a unique id namespace.
     readonly property string procTag: "airpods_" + Math.floor(Math.random() * 1e9)
 
@@ -232,7 +224,7 @@ PluginComponent {
         setNoise(mode === "anc" ? "transparency" : "anc")
     }
 
-    // Conversation Awareness can be *read* from LibrePods but not toggled through
+    // Conversation Awareness can be read from LibrePods but not toggled through
     // any external interface it offers (no CLI/socket command for it, and the tray
     // menu ignores DBus activation events). We show the live state read-only and
     // point the user at the LibrePods app to change it.
@@ -245,7 +237,7 @@ PluginComponent {
             return
         root.optimisticSet("earDetection", on) // instantly synced + locked against stale polls
         Proc.runCommand(procTag + "_eardetection", ["bash", scriptPath, "eardetection", on ? "on" : "off"], function () {
-            ToastService?.showInfo("Ear detection " + (on ? "enabled" : "disabled") + " — reconnect AirPods to apply")
+            ToastService?.showInfo("Ear detection " + (on ? "enabled" : "disabled") + " - reconnect AirPods to apply")
         }, 0, 6000)
     }
 
@@ -254,7 +246,7 @@ PluginComponent {
             return
         root.optimisticSet("deviceName", name) // instantly synced + locked against stale polls
         Proc.runCommand(procTag + "_rename", ["bash", scriptPath, "rename", name], function () {
-            ToastService?.showInfo("Renamed — reconnect AirPods to apply")
+            ToastService?.showInfo("Renamed - reconnect AirPods to apply")
             refreshSoon.restart()
         }, 0, 6000)
     }
@@ -359,7 +351,7 @@ PluginComponent {
             StyledText {
                 visible: !(ring.charging && ring.available)
                 anchors.centerIn: parent
-                text: ring.available ? ring.level : "—"
+                text: ring.available ? ring.level : "-"
                 font.pixelSize: Theme.fontSizeLarge
                 font.weight: Font.DemiBold
                 color: ring.available ? Theme.surfaceText : Theme.surfaceVariantText
@@ -729,7 +721,7 @@ PluginComponent {
 
                 StyledText {
                     anchors.verticalCenter: parent.verticalCenter
-                    text: root.connected && root.lowestLevel >= 0 ? root.lowestLevel + "%" : (root.connected ? "On" : "—")
+                    text: root.connected && root.lowestLevel >= 0 ? root.lowestLevel + "%" : (root.connected ? "On" : "-")
                     font.pixelSize: Theme.fontSizeMedium
                     font.weight: Font.DemiBold
                     color: root.connected ? Theme.primary : Theme.surfaceVariantText
