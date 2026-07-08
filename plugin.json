@@ -3,6 +3,7 @@
     "name": "AirPods Control",
     "category": "utilities",
     "description": "AirPods control center, powered by LibrePods.",
+    "repo": "https://github.com/demic-dev/airpods-widget-DMS",
     "version": "1.0.0",
     "author": "demic-dev",
     "type": "widget",
