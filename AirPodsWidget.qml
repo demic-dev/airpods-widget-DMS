@@ -587,40 +587,11 @@ PluginComponent {
                 onToggled: value => panel.controller.setEarDetection(value)
             }
         }
-
-        // ---- footer --------------------------------------------------------
-        Rectangle {
-            width: parent.width
-            height: 40
-            radius: Theme.cornerRadius
-            color: Theme.surfaceContainerHigh
-
-            Row {
-                anchors.left: parent.left
-                anchors.leftMargin: Theme.spacingM
-                anchors.verticalCenter: parent.verticalCenter
-                spacing: Theme.spacingS
-
-                DankIcon {
-                    anchors.verticalCenter: parent.verticalCenter
-                    name: "info"
-                    size: Theme.iconSizeSmall
-                    color: Theme.surfaceVariantText
-                }
-
-                StyledText {
-                    anchors.verticalCenter: parent.verticalCenter
-                    text: panel.controller.connected ? ("LibrePods · " + panel.controller.modeLabel) : "Waiting for LibrePods"
-                    font.pixelSize: Theme.fontSizeSmall
-                    color: Theme.surfaceVariantText
-                }
-            }
-        }
     }
 
     // ---- popout ------------------------------------------------------------
     popoutWidth: 380
-    popoutHeight: 560
+    popoutHeight: 480
 
     popoutContent: Component {
         PopoutComponent {
@@ -637,7 +608,7 @@ PluginComponent {
     // ---- bar pills ---------------------------------------------------------
     horizontalBarPill: Component {
         StyledRect {
-            implicitWidth: pillRow.implicitWidth + Theme.spacingM * 2
+            implicitWidth: 24 + Theme.spacingM * 2
             height: parent.widgetThickness
             radius: Theme.cornerRadius
             color: root.connected ? Theme.primaryContainer : Theme.surfaceContainerHigh
@@ -707,7 +678,7 @@ PluginComponent {
     ccWidgetPrimaryText: root.deviceName
     ccWidgetSecondaryText: root.connected ? (root.modeLabel + (root.lowestLevel >= 0 ? " · " + root.lowestLevel + "%" : "")) : "Disconnected"
     ccWidgetIsActive: root.connected && root.mode !== "off"
-    ccDetailHeight: 500
+    ccDetailHeight: 440
 
     onCcWidgetToggled: {
         if (root.connected)
