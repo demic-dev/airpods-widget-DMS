@@ -1,3 +1,5 @@
+> DISCLAIMER: This widget was built with heavy assistance from LLMs (Claude). However, before publishing the plugin, the code was reviewed by me, for which I take responsibility.
+
 # AirPods for DankMaterialShell
 
 A batteries included DankMaterialShell (DMS) plugin that puts your AirPods in the bar and the Control Center - battery, noise modes and Conversation Awareness - powered by [LibrePods](https://github.com/kavishdevar/librepods) under the hood.
