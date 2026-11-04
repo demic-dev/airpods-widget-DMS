@@ -11,14 +11,12 @@ StyledRect {
     property bool showBattery: true
     property real iconSize: Theme.iconSize
     property real thickness: 30
-    readonly property real contentPadding: showBattery ? Theme.spacingM * 2 : 0
-
-    implicitWidth: vertical ? thickness : content.implicitWidth + contentPadding
-    implicitHeight: vertical ? content.implicitHeight + contentPadding : thickness
-    radius: Theme.cornerRadius
-    color: showBattery ? (controller.connected ? Theme.primaryContainer : Theme.surfaceContainerHigh) : "transparent"
-    border.width: showBattery && controller.conversation ? 2 : 0
-    border.color: Theme.primary
+    // DMS BasePill owns the button background, padding and interaction states.
+    // This component supplies content only, for either orientation/format.
+    implicitWidth: vertical ? thickness : content.implicitWidth
+    implicitHeight: vertical ? content.implicitHeight : thickness
+    color: "transparent"
+    border.width: 0
 
     GridLayout {
         id: content

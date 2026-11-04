@@ -95,6 +95,10 @@ TestCase {
         wait(0);
         verify(pill.implicitWidth > 0);
         verify(pill.implicitHeight > 0);
+        compare(pill.color, Qt.rgba(0, 0, 0, 0));
+        compare(pill.border.width, 0);
+        compare(data.vertical ? pill.implicitHeight : pill.implicitWidth,
+                data.vertical ? pill.children[0].implicitHeight : pill.children[0].implicitWidth);
         if (!data.battery)
             compare(data.vertical ? pill.implicitHeight : pill.implicitWidth, 20);
     }
