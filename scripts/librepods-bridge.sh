@@ -38,7 +38,7 @@ CONF="${XDG_CONFIG_HOME:-$HOME/.config}/AirPodsTrayApp/AirPodsTrayApp.conf"
 
 # Locate the LibrePods StatusNotifierItem -> prints "SERVICE PATH" or nothing.
 find_sni() {
-    local reply entry service path id
+    local reply entry service path id tooltip fallback=""
     reply=$(dbus-send --session --print-reply=literal \
         --dest="$SNI_WATCHER_DEST" "$SNI_WATCHER_PATH" \
         org.freedesktop.DBus.Properties.Get \
@@ -58,10 +58,20 @@ find_sni() {
             org.freedesktop.DBus.Properties.Get \
             string:org.kde.StatusNotifierItem string:Id 2>/dev/null | awk 'NF{last=$NF} END{print last}')
         if [[ "$id" == "librepods" ]]; then
-            echo "$service $path"
-            return 0
+            # A second LibrePods process may register an empty tray item.
+            # Prefer the instance actually reporting device battery data.
+            [[ -z "$fallback" ]] && fallback="$service $path"
+            tooltip=$(read_tooltip "$service" "$path")
+            if grep -qiE '(Headset|Left):[[:space:]]*[0-9]+%' <<<"$tooltip"; then
+                echo "$service $path"
+                return 0
+            fi
         fi
     done
+    if [[ -n "$fallback" ]]; then
+        echo "$fallback"
+        return 0
+    fi
     return 1
 }
 
@@ -176,20 +186,27 @@ cmd_status() {
     fi
 
     # Device name + ear-detection setting from the LibrePods config file.
-    local eardetection=false ed_setting
+    local eardetection=false ed_setting configured_model=""
     if [[ -f "$CONF" ]]; then
         name=$(grep -E '^deviceName=' "$CONF" | head -1 | cut -d= -f2-)
+        configured_model=$(grep -E '^model=' "$CONF" | head -1 | cut -d= -f2-)
         ed_setting=$(grep -E '^setting=' "$CONF" | head -1 | cut -d= -f2-)
         # setting >= 1 => ear detection active (pause when a bud is removed).
         [[ "${ed_setting:-0}" =~ ^[0-9]+$ ]] && (( ed_setting >= 1 )) && eardetection=true
     fi
     [[ -z "$name" ]] && name="AirPods"
 
+    # LibrePods 0.2.5: Max Lightning = 7, Max USB-C = 8. Battery data may
+    # be temporarily unavailable, but that must not change the device layout.
+    if [[ "$configured_model" == 7 || "$configured_model" == 8 || "$name" == *AirPods*Max* ]]; then
+        model="headset"
+    fi
+
     # BlueZ has the final say when it knows. On disconnect LibrePods' tray stays
     # stale, so we must actively clear the readouts rather than echo the old values.
     case "$bt" in
         true)  connected=true ;;
-        false) connected=false; model="buds"
+        false) connected=false
                left=-1; right=-1; case=-1; headset=-1
                mode="unknown"; conversation=false ;;
     esac
