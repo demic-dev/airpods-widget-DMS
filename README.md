@@ -2,85 +2,157 @@
 
 # AirPods for DankMaterialShell
 
-A batteries included DankMaterialShell (DMS) plugin that puts your AirPods in the bar and the Control Center - battery, noise modes and Conversation Awareness - powered by [LibrePods](https://github.com/kavishdevar/librepods) under the hood.
+Battery status and noise control in the bar and Control Center, powered by
+[LibrePods](https://github.com/librepods-org/librepods).
 
-- **Bar pill** - an earbuds icon with the lowest bud level; a ring highlight when Conversation Awareness is active. Click it to open the popout panel.
-- **Popout panel** - device name (with rename), per-bud + case battery rings, a four-way noise-control selector (Off / Transparency / Adaptive / Noise), and Conversation Awareness + Ear Detection rows.
-- **Control Center tile** - click to cycle Noise ⇄ Transparency; click the empty area to reveal the full panel inline.
+- **Bar:** battery percentage or a minimal icon using DMS's standard icon size and padding.
+- **Panel:** shared by the bar popout and Control Center, with battery, noise modes and detection settings.
+- **AirPods Max:** headphones icon, one headset battery card, Off / Transparency / ANC,
+  and Automatic Head Detection. Earbuds retain Left / Right / Case and Adaptive mode.
+- **Control Center tile:** click to cycle ANC / Transparency; expand for the full panel.
+- **Independent visibility:** hide the disconnected bar widget while keeping the menu tile visible.
 
-![Screenshot 1 (control center)](./assets/control-center.png)
-![Screenshot 2 (widget)](./assets/widget.png)
+![Control Center](./assets/control-center.png)
+![Widget](./assets/widget.png)
 
-## How it talks to LibrePods
+## Requirements and installation
 
-LibrePods has no public API, so the plugin shells out to [`scripts/librepods-bridge.sh`](scripts/librepods-bridge.sh), which uses the interfaces the running daemon already exposes:
+- DMS with widget and Control Center plugin support.
+- Qt 6.6 or newer (the battery ring uses the Qt Quick Shapes curve renderer).
+- `librepods-ctl` and `dbus-send` on `PATH`, checked at plugin startup.
+- LibrePods running, with AirPods paired.
 
-| Feature | Direction | Mechanism |
+Copy or symlink this repository into your DMS plugin directory as `librepods`:
+
+```sh
+ln -s "$PWD" ~/.config/DankMaterialShell/plugins/librepods
+```
+
+Use your installation's actual config directory (some versions use `~/.config/dms`).
+Add **AirPods Control** in DMS's bar / Control Center settings.
+
+If your shell configuration is a read-only Nix store link, declare widget placement
+through your Nix / Home Manager configuration instead of changing it at runtime.
+
+## Settings
+
+| Setting | Options | Default |
 | --- | --- | --- |
-| Battery (L/R/case or headset) | read | tray `StatusNotifierItem` ToolTip |
-| Noise mode + Conversation state | read | tray `DBusMenu` toggle-states |
-| Device name + Ear Detection setting | read | `~/.config/AirPodsTrayApp/AirPodsTrayApp.conf` |
-| Noise mode | **write** | `librepods-ctl noise:<mode>` |
-| Ear Detection | **write** | config file (applies on next reconnect) |
-| Rename | **write** | config file (applies on next reconnect) |
+| Bar appearance | Icon + battery percentage / Minimal icon | Battery percentage |
+| Bar visibility | Only when connected / Always | Only when connected |
+| Control Center visibility | Always / Only when connected | Always |
+| Refresh interval | 1 / 2 / 5 / 10 / 30 seconds | 5 seconds |
 
-### Known LibrePods limitations (0.2.5)
+Refresh intervals previously saved under the legacy `airpods` settings ID are
+preserved until overridden under `librepods`.
 
-- **Conversation Awareness is read-only.** LibrePods exposes no external way to toggle it - `librepods-ctl` only does noise, its control socket only accepts `noise:*`, and the tray menu ignores DBus activation events. The plugin shows the live state and points you at the LibrePods app to change it.
-- **Ear Detection / Rename apply on reconnect.** They're written to LibrePods' config; the daemon reads them when the AirPods next connect. The plugin shows a toast reminding you.
-- **LibrePods must be running** and the AirPods connected. If the daemon's tray icon fails to register (a startup race with the desktop portal), reads return "Disconnected" even though control still works - restart LibrePods.
+### Control Center visibility integration
 
-## Requirements
+Bar visibility is handled by the plugin and needs no shell modifications.
+The Control Center is always visible by default, independently of the bar.
 
-- `librepods-ctl` and `dbus-send` on `PATH` (the plugin's startup check enforces this).
-- The LibrePods daemon running with your AirPods paired.
+Some DMS versions do **not** consult a plugin's visibility when laying out Control
+Center tiles. On those versions, selecting **Only when connected** for the Control
+Center requires shell-side integration; the plugin cannot remove the host's tile
+or reclaim its layout space by itself.
 
-## Install
+[`integrations/dms-control-center-visibility.patch`](integrations/dms-control-center-visibility.patch)
+adds that integration for DMS versions with `Modules/ControlCenter/utils/widgets.js`.
+Apply it to the shell source (or declaratively through a Nix package override),
+then rebuild/restart the shell. Other versions may need an equivalent adapter.
+Without integration, the Control Center tile remains visible regardless of this setting.
 
-Symlink (or copy) this repo into the DMS plugin directory so the directory name matches the plugin:
+The plugin also exposes `ccWidgetVisible` for hosts supporting that contract.
+The adapter checks the saved setting and `PluginService.globalVars.airpods_state.state.connected`.
+It filters displayed tiles rather than deleting saved widget placement.
 
-```sh
-ln -s "$PWD" ~/.config/DankMaterialShell/plugins/AirPods
-```
+## LibrePods interfaces and limitations
 
-Then add the widget to your bar / Control Center from **DMS Settings → Widgets** (or **Control Center**), searching for *AirPods*.
+The plugin shells out to [`scripts/librepods-bridge.sh`](scripts/librepods-bridge.sh):
 
-> **home-manager / NixOS users:** if your DMS `settings.json` is a read-only symlink into `/nix/store`, you cannot add the widget from the GUI at runtime - declare it in your DMS configuration instead.
-
-## Developing / hot-reload
-
-Force a full unload + reload of the compiled component (bypasses the QML cache):
-
-```sh
-dms ipc plugin-scan reload airpods     # `call` is optional: `dms ipc call …` is equivalent
-```
-
-**Then close and re-open the surface you're testing.** `reload` swaps the plugin *component*, but DMS creates the widget *instances* lazily - the Control Center tile/detail and the bar popout are each instantiated the moment you open them. An already-open Control Center keeps its old instance until you close and reopen it, so edits can look like they "didn't apply" when the component actually did reload. Closing the surface (or, worst case, restarting the shell) guarantees a fresh instance on the new code.
-
-Other IPC helpers:
-
-- `dms ipc plugin-scan rescan airpods` - re-read the manifest only.
-- `dms ipc plugin-scan scan` - rescan the whole plugin directory.
-
-Watching live QML errors from the running shell (plugin `console.log` is **not** routed here - only QML compile errors and core `Log.scoped` messages appear):
-
-```sh
-dms-share=$(quickshell list --all | grep -oE '/nix/.*/dms' | head -1)
-quickshell -p "$dms-share" log | grep -i airpods
-```
-
-The `pollInterval` (how often the bridge is polled for status) is configurable in the plugin's settings - default 5s.
-
-### One quirk worth knowing: the Control Center *detail* has no plugin service
-
-DMS renders a Control Center tile's expanded detail on a *throwaway* widget instance created with `pluginComponent.createObject(null)` - no `pluginService` and an empty `pluginId`. A plugin that reaches for `pluginService` (or `getPluginPath`) to fetch its data will therefore show nothing in the detail even though the collapsed tile works. This plugin sidesteps that by resolving the bridge script **relative to its own QML file** (`Qt.resolvedUrl`) and polling independently, so the detail is self-sufficient. Each surface polls on its own, so every `Proc.runCommand` id is namespaced per-instance (`procTag`) - a shared id would let concurrent instances overwrite each other's callbacks.
-
-## Files
-
-| File | Role |
+| Data / operation | Interface |
 | --- | --- |
-| `AirPodsWidget.qml` | The entire plugin: `PluginComponent` controller (state, polling, control fns), bar pills, popout, CC tile + detail, plus the shared `PanelBody`, `BatteryRing` and `ToggleRow` **inline components** |
-| `Settings.qml` | Poll-interval setting |
-| `StartupCheck.qml` | Verifies `librepods-ctl` / `dbus-send` are present |
-| `scripts/librepods-bridge.sh` | The LibrePods bridge (all read/write logic) |
+| Battery | tray StatusNotifierItem ToolTip |
+| Noise mode / Conversation Awareness | tray DBusMenu toggle states |
+| Connection | BlueZ Device1.Connected, with a tray fallback |
+| Device name / detection setting / Max model | LibrePods config file |
+| Change noise mode | `librepods-ctl noise:<mode>` |
+| Change detection / rename | config file; reconnect to apply |
 
+LibrePods 0.2.5 limitations:
+
+- **Conversation Awareness is read-only:** there is no external write command.
+  The panel directs you to the LibrePods app to change it.
+- **Detection and rename require reconnecting.** A toast reminds you after writing.
+- **Initial noise selection may be missing:** LibrePods can receive Transparency
+  without updating its tray checkmark when it matches its default. This requires
+  an upstream LibrePods fix; the widget deliberately does not invent a selected mode.
+- **Run one LibrePods instance.** The bridge prefers the tray instance with battery
+  data if duplicates exist, but duplicate daemons can still break the control socket.
+- The LibrePods config contains pairing secrets. Do not attach it to issues or PRs.
+
+Codec preference, native notifications and LibrePods startup are outside this
+plugin's scope. This repository does not install system services or patch codecs.
+
+## Architecture
+
+All executable source and test files are limited to 300 lines.
+
+| File / directory | Responsibility |
+| --- | --- |
+| `AirPodsWidget.qml` | DMS entry point, surface wiring, settings, visibility and detail sizing |
+| `logic/AirPodsController.qml` | Shared live state, polling, commands and delayed confirmation |
+| `logic/State.js` | Pure normalization, reconciliation, battery and visibility helpers |
+| `components/AirPodsPanel.qml` | Composes the shared panel |
+| `components/DeviceHeader.qml` | Device icon and name |
+| `components/BatterySection.qml` | Selects the headset or earbuds layout |
+| `components/HeadsetBattery.qml` | AirPods Max battery card |
+| `components/BatteryRing.qml` | Reusable earbuds battery indicator |
+| `components/NoiseSelector.qml` | Capability-aware noise buttons |
+| `components/ToggleRow.qml` | Reusable detection / conversation row |
+| `components/BarPill.qml` | One implementation for horizontal and vertical bars |
+| `Settings.qml`, `StartupCheck.qml` | Settings UI and dependency check |
+| `scripts/librepods-bridge.sh` | D-Bus / BlueZ / config boundary |
+| `tests/` | Headless QtTest suite with small DMS boundary mocks |
+
+Each DMS surface can instantiate the entry point independently. Controllers share
+one reactive store (`airpods_state`), including optimistic write locks, so a stale
+poll cannot immediately undo a click on another surface. Locks expire after four
+seconds or clear on hardware confirmation / disconnection. Each controller uses
+unique process IDs so simultaneous polls do not replace one another's callbacks.
+
+Control Center detail instances may not have a `pluginService` or `pluginId`.
+The entry point resolves the bridge relative to its own file as a fallback and
+passes the absolute path to the controller. Nested components never need to know
+the plugin installation path.
+
+## Development and tests
+
+With Qt 6's `qmltestrunner` and `qmllint` on `PATH`:
+
+```sh
+bash tests/run.sh
+```
+
+Or provide executable paths with `QMLTESTRUNNER` and `QMLLINT`. On NixOS, ensure
+Qt's QML modules are available through `QML2_IMPORT_PATH` if not provided by your shell.
+The runner checks QML syntax, shell syntax and the 300-line limit, then runs QtTest
+offscreen. The suite was validated locally with Qt 6.12.0.
+
+Tests cover state normalization, lock confirmation / expiry / disconnection,
+battery fallbacks, legacy settings, independent visibility, shared controllers,
+Max / earbuds modes, both bar orientations and formats, panel sizing and DMS entry
+point construction. DMS singletons / widgets are mocked only at the host boundary;
+the actual plugin controller, panel and subcomponents are instantiated.
+These tests do not replace a live Bluetooth / D-Bus smoke test.
+
+Reload the installed plugin:
+
+```sh
+dms ipc call plugins reload librepods
+```
+
+Close and reopen the surface being tested; already-open surfaces can retain their
+old instances. For shell versions with older IPC names, use their equivalent reload
+command. Also check both connected and disconnected states, bar orientations,
+Control Center expansion, noise switching and settings changes on a live shell.

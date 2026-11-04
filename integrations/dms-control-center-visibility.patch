@@ -1,0 +1,14 @@
+diff --git a/Modules/ControlCenter/utils/widgets.js b/Modules/ControlCenter/utils/widgets.js
+--- a/Modules/ControlCenter/utils/widgets.js
++++ b/Modules/ControlCenter/utils/widgets.js
+@@ -63,6 +63,10 @@ function isShown(widget) {
+         return Services.BatteryService.batteryAvailable || Services.PowerProfileWatcher.available;
+     case "diskUsage":
+         return Services.DgopService.dgopAvailable;
++    case "plugin_librepods":
++        // Keep bar and Control Center visibility independent.
++        return Common.SettingsData.getPluginSetting("librepods", "controlCenterVisibility", "always") !== "connected"
++            || Services.PluginService.globalVars.airpods_state?.state?.connected === true;
+     default:
+         return true;
+     }
